@@ -38,12 +38,6 @@ pip install torch numpy pandas matplotlib scikit-learn
 
 Les notebooks se lancent dans l'ordre indiqué ci-dessus (Jupyter ou VS Code). Les modèles pré-entraînés (`mlp_reference.pth`, `pinn_reference.pth`) permettent de sauter les phases d'entraînement longues et de directement visualiser les résultats via `fonction.charger_mlp()` / `fonction.charger_pinn()`.
 
-## Conclusion
 
-- Pour un problème **bien posé et dans le domaine d'entraînement**, les méthodes numériques classiques (Volumes Finis) restent imbattables en précision et en coût de calcul.
-- Un **MLP** purement data-driven donne de bons résultats en interpolation, mais **s'effondre en extrapolation** (nouvelle condition initiale, temps hors de la plage d'entraînement).
-- Un **PINN**, en intégrant la physique dans la fonction de coût, offre un compromis : légèrement moins précis qu'un solveur classique en interpolation, mais **beaucoup plus robuste en généralisation**, ce qui en fait une approche pertinente lorsque les données sont rares ou que le modèle doit être extrapolé.
-
-## Auteure
 
 Zineb A.

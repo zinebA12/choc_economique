@@ -43,95 +43,38 @@ def u_analytique(x, t, A=A, x0=x0, sigma=sigma, D=D, alpha=alpha):
 # Méthode des volumes finis
 # ============================================================
 
-def u_volume_finie(
-    A=A,
-    x0=x0,
-    sigma=sigma,
-    D=D,
-    alpha=alpha,
-    L=L,
-    T=T,
-    Nx=Nx,
-    clf=clf,
-    ic_func=None,
-    bc_func=None
-):
-
+def u_volume_finie(A=A, x0=x0, sigma=sigma, D=D, alpha=alpha, L=L, T=T, Nx=Nx, clf=clf,
+                    ic_func=None, bc_func=None):
     dx = 2 * L / Nx
-
     x_VF = -L + (np.arange(Nx) + 0.5) * dx
-
     dt = clf * dx**2 / D
-
     Nt = int(T / dt) + 1
-
     U_num = np.zeros((Nt, Nx))
-
     t_VF = np.linspace(0, T, Nt)
 
-    # Condition initiale
     if ic_func is not None:
         U_num[0, :] = ic_func(x_VF)
     else:
-        U_num[0, :] = A * np.exp(
-            -(x_VF - x0)**2 / sigma**2
-        )
+        U_num[0, :] = A * np.exp(-(x_VF - x0)**2 / sigma**2)
 
-    # Coefficient de stabilité
     r = D * dt / dx**2
 
     for i in range(Nt - 1):
-
-        # Points intérieurs
-        for j in range(1, Nx - 1):
-
-            U_num[i+1, j] = (
-                U_num[i, j]
-                + r * (
-                    U_num[i, j+1]
-                    - 2 * U_num[i, j]
-                    + U_num[i, j-1]
-                )
-                - alpha * dt * U_num[i, j]
-            )
-
-        # Conditions aux limites
+        # --- points intérieurs : une seule instruction NumPy remplace
+        # la boucle "for j in range(1, Nx-1)" ---
+        U_num[i+1, 1:-1] = (
+            U_num[i, 1:-1]
+            + r * (U_num[i, 2:] - 2*U_num[i, 1:-1] + U_num[i, :-2])
+            - alpha * dt * U_num[i, 1:-1]
+        )
         if bc_func is not None:
-
-            U_num[i+1, 0] = bc_func(
-                x_VF[0],
-                t_VF[i+1]
-            )
-
-            U_num[i+1, -1] = bc_func(
-                x_VF[-1],
-                t_VF[i+1]
-            )
-
+            U_num[i+1, 0] = bc_func(x_VF[0], t_VF[i+1])
+            U_num[i+1, -1] = bc_func(x_VF[-1], t_VF[i+1])
         else:
-
-            U_num[i+1, 0] = u_analytique(
-                x_VF[0],
-                t_VF[i+1],
-                A,
-                x0,
-                sigma,
-                D,
-                alpha
-            )
-
-            U_num[i+1, -1] = u_analytique(
-                x_VF[-1],
-                t_VF[i+1],
-                A,
-                x0,
-                sigma,
-                D,
-                alpha
-            )
+            U_num[i+1, 0] = u_analytique(x_VF[0], t_VF[i+1], A, x0, sigma, D, alpha)
+            U_num[i+1, -1] = u_analytique(x_VF[-1], t_VF[i+1], A, x0, sigma, D, alpha)
 
     return x_VF, t_VF, U_num
-
 
 # ============================================================
 # Calcul des erreurs
@@ -179,7 +122,32 @@ def snapshot_state_dict(model):
     """
     return {k: v.detach().clone() for k, v in model.state_dict().items()}
 
+#==========Maillage de test pour le PINN paramétrique (x,t,D,alpha,sigma) ==========
+def vf_a_un_temps(Nx, t_cible=3.0, A=A, x0=x0, sigma=sigma, D=D, alpha=alpha, L=L, clf=clf):
+    """Résout l'EDP jusqu'à t_cible SANS stocker toute la trajectoire —
+    ne renvoie que l'état final, pour une étude de convergence rapide."""
+    dx = 2 * L / Nx
+    x = -L + (np.arange(Nx) + 0.5) * dx
+    dt_cfl = clf * dx**2 / D
+    nsteps = int(np.ceil(t_cible / dt_cfl))
+    dt = t_cible / nsteps
+    r = D * dt / dx**2
 
+    u = A * np.exp(-(x - x0)**2 / sigma**2)
+
+    for n in range(nsteps):
+        t_np1 = (n + 1) * dt
+        unew = np.empty_like(u)
+        unew[1:-1] = (
+            u[1:-1]
+            + r * (u[2:] - 2.0*u[1:-1] + u[:-2])
+            - alpha * dt * u[1:-1]
+        )
+        unew[0] = u_analytique(x[0], t_np1, A, x0, sigma, D, alpha)
+        unew[-1] = u_analytique(x[-1], t_np1, A, x0, sigma, D, alpha)
+        u = unew
+
+    return x, t_cible, u, dx, dt, nsteps
 # ============================================================
 # Architectures partagées (nécessaires pour recharger un state_dict
 # depuis n'importe quel notebook)
@@ -281,3 +249,21 @@ def charger_pinn(path='../pinn_reference.pth'):
         't_lbfgs': ckpt.get('t_lbfgs', np.nan),
     }
     return model, meta
+
+#============================================================
+#  PINN paramétrique
+#============================================================
+
+
+class PINNParametrique(nn.Module):
+    def __init__(self, hidden_dim=64):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(5, hidden_dim), nn.Tanh(),
+            nn.Linear(hidden_dim, hidden_dim), nn.Tanh(),
+            nn.Linear(hidden_dim, hidden_dim), nn.Tanh(),
+            nn.Linear(hidden_dim, 1),
+        )
+
+    def forward(self, x):
+        return torch.nn.functional.softplus(self.net(x))
